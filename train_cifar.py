@@ -141,8 +141,11 @@ def main(flags : DictConfig):
         else:
             epochs_no_improve += 1
 
-        if epoch > 100 and epochs_no_improve >= max_patience:
+        if epochs_no_improve >= max_patience:
             print('Early stopping!')
             break
         else:
             continue
+
+if __name__ == "__main__":
+    print("use main.py to launch training - it sets the config params")

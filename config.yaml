@@ -23,13 +23,13 @@ log_freq: 5     # frequency of logging in *seconds*
 datadir: ${hydra:runtime.cwd}/data/
 image_size: 32
 
-batch_size: 32
+batch_size: 128
 embed_dim: 256
 num_heads: 4
 mlp_dim: 1024
 num_layers: 6
 dropout: 0.1
 
-lr: 0.0003
+lr: 0.0006
 weight_decay: 0.0
 num_epochs: 18
