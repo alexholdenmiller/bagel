@@ -10,12 +10,12 @@ defaults:
 #   sweep:
 #     dir: ${env:SCRATCH}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
 #   launcher:
-#     gres: gpu:1     # use this on the nyu greene cluster instead of partition
+#     gres: gpu:1     # use this on the nyu greene cluster instead of gpus_per_node
 #     timeout_min: 15     
 #     tasks_per_node: 1
 #     cpus_per_task: 2
 #     nodes: 1
-#     mem_gb: 16     # don't go nuts
+#     mem_gb: 16
 #     max_num_timeout: 0     # increase if you support requeuing / preemption
 #     gpus_per_node: null     # don't use this, use gres
 #     partition: null     # don't use this
