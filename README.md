@@ -7,5 +7,5 @@ python main.py
 # for logging
 pip install wandb
 wandb login
-python main.py wandb=True
+python main.py wandb_log=True
 ```

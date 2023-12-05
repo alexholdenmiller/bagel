@@ -117,6 +117,9 @@ class VisionTransformer(nn.Module):
 
         return logits
 
+
+
+
 class ImageEmbed(nn.Module):
     def __init__(self, image_size, patch_size, in_channels, embed_dim):
         super(ImageEmbed, self).__init__()
@@ -133,7 +136,6 @@ class ImageEmbed(nn.Module):
         self.norm = nn.LayerNorm(self.embed_dim)
 
     def forward(self, x):
-        # TODO
         x = self.proj(x)
         x = x.flatten(2).transpose(1, 2)
         x = self.norm(x)
@@ -143,8 +145,7 @@ class ImageEmbed(nn.Module):
 class VT2(nn.Module):
     def __init__(self, image_size, patch_size, in_channels, embed_dim, num_heads, mlp_dim, num_layers, num_classes, dropout=0.1):
         super(VT2, self).__init__()
-        # TODO replace patch_embed with something new
-        self.patch_embed = PatchEmbedding(image_size, patch_size, in_channels, embed_dim)
+        self.patch_embed = ImageEmbed(image_size, patch_size, in_channels, embed_dim)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.embed_len = self.patch_embed.num_patches + 1
         self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, embed_dim))
@@ -161,7 +162,6 @@ class VT2(nn.Module):
                                 )
 
     def forward(self, x):
-        # TODO
         x = self.patch_embed(x)
         x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
         x = x + self.pos_embed
