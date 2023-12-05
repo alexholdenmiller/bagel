@@ -1,7 +1,25 @@
-# SLURM config
 defaults:
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
+  # - override hydra/launcher: submitit_slurm
+
+# SLURM config
+# hydra:
+#   run:  # don't put outputs in HOME, use SCRATCH instead
+#     dir: ${env:SCRATCH}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+#   sweep:
+#     dir: ${env:SCRATCH}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+#   launcher:
+#     gres: gpu:1     # use this on the nyu greene cluster instead of partition
+#     timeout_min: 15     
+#     tasks_per_node: 1
+#     cpus_per_task: 2
+#     nodes: 1
+#     mem_gb: 16     # don't go nuts
+#     max_num_timeout: 0     # increase if you support requeuing / preemption
+#     gpus_per_node: null     # don't use this, use gres
+#     partition: null     # don't use this
+#     comment: null     # optionally use this to tell others on the cluster what your job is up to
 
 hydra:
   job:
