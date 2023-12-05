@@ -1,0 +1,169 @@
+
+import hydra
+import logging
+import os
+import torch
+import wandb
+
+import plotext as plt
+import torch.nn as nn
+
+from omegaconf import DictConfig, OmegaConf
+from torchvision import datasets, transforms
+from tqdm import tqdm
+
+from models import VisionTransformer
+
+log = logging.getLogger(__name__)
+
+
+def set_device(cuda : bool):
+    device = "cpu"
+    if cuda:
+        if torch.cuda.is_available():
+            device = "cuda"
+            log.info("found gpu, using it")
+        else:
+            log.info("no gpu found, defaulting to cpu")
+    return torch.device(device)
+
+def get_data(flags):
+    # Load the CIFAR-10 dataset
+
+
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.Resize(flags.image_size),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+
+    transform_test = transforms.Compose([
+        transforms.Resize(flags.image_size),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+
+    trainset = datasets.CIFAR10(root=flags.datadir, train=True, download=True, transform=transform_train)
+    validset = datasets.CIFAR10(root=flags.datadir, train=False, download=True, transform=transform_test)
+    return trainset, validset
+
+def main(flags : DictConfig):
+    device = set_device(flags.cuda)
+    torch.manual_seed(flags.random_seed)
+
+    trainset, validset = get_data(flags)
+
+    # constants
+    patch_size = 4
+    in_channels = 3
+    num_classes = 10
+
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=flags.batch_size, shuffle=True, num_workers=0, pin_memory=(device == "cuda"))
+    validloader = torch.utils.data.DataLoader(validset, batch_size=flags.batch_size, shuffle=False, num_workers=0, pin_memory=(device == "cuda"))
+
+    model = VisionTransformer(flags.image_size, patch_size, in_channels, flags.embed_dim, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
+    model = model.to(device)
+    criterion = nn.CrossEntropyLoss()
+
+    optimizer = torch.optim.AdamW(model.parameters(),
+                                lr=flags.lr,
+                                weight_decay=flags.weight_decay)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=flags.lr, steps_per_epoch=len(trainloader), epochs=flags.num_epochs)
+
+    best_val_acc = 0
+    train_accs = [0.0]
+    val_accs = [0.0]
+    epochs_no_improve = 0
+    max_patience = 10
+    pbar = tqdm(range(flags.num_epochs))
+
+    plt.plot_size(60, 10)
+
+    for epoch in pbar:
+        # if not load_pretrained:
+        running_accuracy = 0.0
+        running_loss = 0.0
+        model.train()
+        for batch in trainloader:
+            inputs, labels = batch
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            acc = (outputs.argmax(dim=1) == labels).float().mean()
+            running_accuracy += acc.item()
+            running_loss += loss.item()
+
+        running_accuracy /= len(trainloader)
+        running_accuracy *= 100
+        running_loss /= len(trainloader)
+        train_accs.append(running_accuracy)
+
+        # Validate the model
+        model.eval()
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for data in validloader:
+                images, labels = data
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+        val_acc = 100 * correct / total
+        val_accs.append(val_acc)
+
+        print()
+        plt.clear_data()
+        plt.plot(train_accs, label="train")
+        plt.plot(val_accs, label="valid")
+        plt.show()
+
+        pbar.set_postfix({"Epoch": epoch+1, "Train Accuracy": running_accuracy, "Training Loss": running_loss, "Validation Accuracy": val_acc})
+
+        # Save the best model
+
+        if val_acc > best_val_acc:
+            epochs_no_improve = 0
+            best_val_acc = val_acc
+        else:
+            epochs_no_improve += 1
+
+        if epoch > 100 and epochs_no_improve >= max_patience:
+            print('Early stopping!')
+            break
+        else:
+            continue
+    
+    
+
+# use hydra for config / savings outputs
+@hydra.main(config_path=".", config_name="config", version_base="1.1")
+def setup(flags : DictConfig):
+    if os.path.exists("config.yaml"):
+        # this lets us requeue runs without worrying if we changed our local config since then
+        logging.info("loading pre-existing configuration, we're continuing a previous run")
+        new_flags = OmegaConf.load("config.yaml")
+        cli_conf = OmegaConf.from_cli()
+        # however, you can override parameters from the cli still
+        # this is useful e.g. if you did total_epochs=N before and want to increase it
+        flags = OmegaConf.merge(new_flags, cli_conf)
+
+    # log config + save it to local directory
+    log.info(OmegaConf.to_yaml(flags))
+    OmegaConf.save(flags, "config.yaml")
+
+    if flags.wandb:
+        wandb.init(project=flags.wbproject, entity=flags.wbentity, group=flags.group, config=flags)
+    
+    main(flags)
+
+
+if __name__ == "__main__":
+    setup()
