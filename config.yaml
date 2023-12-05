@@ -4,6 +4,7 @@ defaults:
   # - override hydra/launcher: submitit_slurm
 
 # SLURM config
+# This might help with Greene setup: https://github.com/alexholdenmiller/nyu_cluster/
 # hydra:
 #   run:  # don't put outputs in HOME, use SCRATCH instead
 #     dir: ${env:SCRATCH}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
