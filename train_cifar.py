@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
-from models import VisionTransformer
+from models import VisionTransformer, VisionTransWithConvs
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +60,16 @@ def main(flags : DictConfig):
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=flags.batch_size, shuffle=True, num_workers=0, pin_memory=(device == "cuda"))
     validloader = torch.utils.data.DataLoader(validset, batch_size=flags.batch_size, shuffle=False, num_workers=0, pin_memory=(device == "cuda"))
 
-    model = VisionTransformer(flags.image_size, patch_size, in_channels, flags.embed_dim, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
+    if flags.model == "vit":
+        model = VisionTransformer(flags.image_size, patch_size, in_channels, flags.embed_dim, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
+    elif flags.model == "convt":
+        model = VisionTransWithConvs(flags.image_size, flags.conv_kernel_size, in_channels, flags.embed_dim, flags.conv_groups, flags.conv_stride, flags.conv_dilate, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
+    else:
+        raise RuntimeError(f"don't recognize model={flags.model}")
+    
+    trainable_params = sum([p.numel() for p in model.parameters() if p.requires_grad])
+    log.info(f"model has {trainable_params} trainable parameters")
+
     model = model.to(device)
     criterion = nn.CrossEntropyLoss()
 
@@ -146,6 +155,10 @@ def main(flags : DictConfig):
             break
         else:
             continue
+
+    if flags.wandb_log:
+        wandb.run.summary["best_valid_acc"] = best_val_acc
+        wandb.run.summary["model_size"] = trainable_params
 
 if __name__ == "__main__":
     print("use main.py to launch training - it sets the config params")

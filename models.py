@@ -1,12 +1,11 @@
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from tqdm import tqdm
+
 
 class PatchEmbedding(nn.Module):
     def __init__(self, image_size, patch_size, in_channels, embed_dim):
-        super(PatchEmbedding, self).__init__()
+        super().__init__()
         self.image_size = image_size
         self.patch_size = patch_size
         self.in_channels = in_channels
@@ -28,7 +27,7 @@ class PatchEmbedding(nn.Module):
     
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, embed_dim, num_heads):
-        super(MultiHeadSelfAttention, self).__init__()
+        super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
         self.head_dim = self.embed_dim // self.num_heads
@@ -62,9 +61,9 @@ class MultiHeadSelfAttention(nn.Module):
     
 class TransformerBlock(nn.Module):
     def __init__(self, embed_dim, num_heads, mlp_dim, dropout):
-        super(TransformerBlock, self).__init__()
+        super().__init__()
         self.attention = MultiHeadSelfAttention(embed_dim, num_heads)
-        self.attention_norm = nn.LayerNorm(embed_dim)
+        self.layer_norm = nn.LayerNorm(embed_dim)
         self.mlp = nn.Sequential(nn.Linear(embed_dim, mlp_dim),
                                   nn.GELU(),
                                   nn.Dropout(dropout),
@@ -76,7 +75,7 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x):
         res = x
-        x = self.attention_norm(x)
+        x = self.layer_norm(x)
         x = self.attention(x)
 
         x = x + res # residual connection
@@ -88,11 +87,11 @@ class TransformerBlock(nn.Module):
     
 class VisionTransformer(nn.Module):
     def __init__(self, image_size, patch_size, in_channels, embed_dim, num_heads, mlp_dim, num_layers, num_classes, dropout=0.1):
-        super(VisionTransformer, self).__init__()
+        super().__init__()
         self.patch_embed = PatchEmbedding(image_size, patch_size, in_channels, embed_dim)
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.embed_len = self.patch_embed.num_patches + 1
         self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, embed_dim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.dropout = nn.Dropout(dropout)
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(embed_dim, num_heads, mlp_dim, dropout) for i in range(num_layers)
@@ -102,7 +101,6 @@ class VisionTransformer(nn.Module):
                                 nn.GELU(),
                                 nn.Dropout(dropout),
                                 nn.Linear(embed_dim // 2, num_classes),
-                                # nn.Dropout(dropout)
                                 )
 
     def forward(self, x):
@@ -118,37 +116,18 @@ class VisionTransformer(nn.Module):
         return logits
 
 
+class VisionTransWithConvs(nn.Module):
+    def __init__(self, image_size, kernel_size, in_channels, embed_dim, groups, stride, dilate, num_heads, mlp_dim, num_layers, num_classes, dropout=0.1):
+        super().__init__()
 
+        # set up feature extractor
+        self.conv2d = nn.Conv2d(in_channels, embed_dim * groups, kernel_size, groups=groups, stride=stride, dilation=dilate)
+        self.proj_feats = nn.Linear(embed_dim * groups, embed_dim)
+        self.feat_norm = nn.LayerNorm(embed_dim)
 
-class ImageEmbed(nn.Module):
-    def __init__(self, image_size, patch_size, in_channels, embed_dim):
-        super(ImageEmbed, self).__init__()
-        self.image_size = image_size
-        self.patch_size = patch_size
-        self.in_channels = in_channels
-        self.embed_dim = embed_dim
-        self.num_patches = (self.image_size // self.patch_size) ** 2
-        self.proj = nn.Conv2d(self.in_channels,
-                            self.embed_dim,
-                            kernel_size=self.patch_size,
-                            stride=self.patch_size
-                           )
-        self.norm = nn.LayerNorm(self.embed_dim)
-
-    def forward(self, x):
-        x = self.proj(x)
-        x = x.flatten(2).transpose(1, 2)
-        x = self.norm(x)
-
-        return x
-
-class VT2(nn.Module):
-    def __init__(self, image_size, patch_size, in_channels, embed_dim, num_heads, mlp_dim, num_layers, num_classes, dropout=0.1):
-        super(VT2, self).__init__()
-        self.patch_embed = ImageEmbed(image_size, patch_size, in_channels, embed_dim)
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.embed_len = self.patch_embed.num_patches + 1
+        self.embed_len = int(((image_size - dilate * (kernel_size - 1) + 1) / stride + 1) ** 2) + 1  # max seqlen
         self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, embed_dim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.dropout = nn.Dropout(dropout)
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(embed_dim, num_heads, mlp_dim, dropout) for i in range(num_layers)
@@ -158,17 +137,24 @@ class VT2(nn.Module):
                                 nn.GELU(),
                                 nn.Dropout(dropout),
                                 nn.Linear(embed_dim // 2, num_classes),
-                                # nn.Dropout(dropout)
                                 )
 
     def forward(self, x):
-        x = self.patch_embed(x)
+        # feature extract
+        x = self.conv2d(x)
+        x = x.flatten(2).transpose(1, 2)
+        x = self.proj_feats(x)
+        x = self.feat_norm(x)
+
+        # add class embedding
         x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
-        x = x + self.pos_embed
-        # x = self.dropout(x)
+
+        # add positional embedding
+        x = x + self.pos_embed[:, -x.size(1):, :]
+
         for block in self.transformer_blocks:
             x = block(x)
-        # x = self.norm(x)
+
         logits = self.cls_head(x[:, 0])
 
         return logits

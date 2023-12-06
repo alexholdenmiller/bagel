@@ -51,4 +51,14 @@ dropout: 0.1
 
 lr: 0.0006
 weight_decay: 0.0
-num_epochs: 18
+num_epochs: 10
+
+# model options
+# vit: standard vision transformer with patch embeddings, ie nn.Conv2d(3, edim, kernel=psz, stride=psz)
+# cont: conv feature extractor, then transformer, nn.Conv2d(edim, kernel=2, groups=)
+model: vit  # vit, convt
+
+conv_kernel_size: 9
+conv_stride: 3
+conv_groups: 1
+conv_dilate: 1
