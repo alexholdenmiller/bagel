@@ -63,7 +63,7 @@ def main(flags : DictConfig):
     if flags.model == "vit":
         model = VisionTransformer(flags.image_size, patch_size, in_channels, flags.embed_dim, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
     elif flags.model == "convt":
-        model = VisionTransWithConvs(flags.image_size, flags.conv_kernel_size, in_channels, flags.embed_dim, flags.conv_groups, flags.conv_stride, flags.conv_dilate, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
+        model = VisionTransWithConvs(flags.image_size, flags.conv_kernel, in_channels, flags.embed_dim, flags.conv_groups, flags.conv_stride, flags.conv_dilate, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
     else:
         raise RuntimeError(f"don't recognize model={flags.model}")
     
