@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:rtx8000:1
 #SBATCH --requeue
 #SBATCH --time=1:00:00
-#SBATCH --mem=360GB
+#SBATCH --mem=48GB
 #SBATCH --output=logs/res_%j.out
 #SBATCH --error=logs/err_%j.err
 #SBATCH --job-name='llvm'
