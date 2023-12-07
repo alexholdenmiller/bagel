@@ -56,7 +56,7 @@ num_epochs: 10
 # cont: conv feature extractor, then transformer, nn.Conv2d(edim, kernel=2, groups=)
 model: vit  # vit, convt
 
-conv_kernel: 9
+conv_kernel: 5
 conv_stride: 3
 conv_groups: 1
 conv_dilate: 1
