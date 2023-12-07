@@ -9,3 +9,6 @@ pip install wandb
 wandb login
 python main.py wandb_log=True
 ```
+
+for set up on greene check out this:
+https://github.com/alexholdenmiller/nyu_cluster/edit/main/README.md
