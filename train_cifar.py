@@ -6,6 +6,7 @@ import plotext as plt
 import torch.nn as nn
 
 from omegaconf import DictConfig
+from time import time
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
@@ -85,16 +86,16 @@ def main(flags : DictConfig):
     val_accs = [0.0]
     epochs_no_improve = 0
     max_patience = 3
-    pbar = tqdm(range(flags.num_epochs))
 
     plt.plot_size(60, 10)
 
-    for epoch in pbar:
+    prev_time = time()
+    for epoch in range(1, flags.num_epochs + 1):
         # if not load_pretrained:
         running_accuracy = 0.0
         running_loss = 0.0
         model.train()
-        for batch in trainloader:
+        for batch in tqdm(trainloader, desc=f"Training Epoch {epoch}: "):
             inputs, labels = batch
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -133,14 +134,20 @@ def main(flags : DictConfig):
         plt.plot(val_accs, label="valid")
         plt.show()
 
-        pbar.set_postfix({"Epoch": epoch+1, "Train Accuracy": running_accuracy, "Training Loss": running_loss, "Validation Accuracy": val_acc})
+        curr_time = time()
+        log.info({"Epoch": epoch,
+                  "Time Taken": round(curr_time - prev_time, 1),
+                  "Train Accuracy": round(running_accuracy, 1),
+                  "Training Loss": round(running_loss, 2),
+                  "Validation Accuracy": round(val_acc, 1)})
+        prev_time = curr_time
 
         if flags.wandb_log:
             wandb.log({
                 "train_acc": running_accuracy,
                 "train_loss": running_loss,
                 "valid_acc": val_acc,
-                "epoch": epoch + 1
+                "epoch": epoch
             })
 
 
