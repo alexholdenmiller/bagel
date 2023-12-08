@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 from torchvision import datasets, transforms
 from tqdm import tqdm
 
-from models import VisionTransformer, VisionTransWithConvs
+from models import VisionTransformer, VitWithConvs, VitWithVQ
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +63,9 @@ def main(flags : DictConfig):
     if flags.model == "vit":
         model = VisionTransformer(flags.image_size, patch_size, in_channels, flags.embed_dim, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
     elif flags.model == "convt":
-        model = VisionTransWithConvs(flags.image_size, flags.conv_kernel, in_channels, flags.embed_dim, flags.conv_groups, flags.conv_stride, flags.conv_dilate, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
+        model = VitWithConvs(flags, in_channels, num_classes)
+    elif flags.model == "vqt":
+        model = VitWithVQ(flags, in_channels, num_classes)
     else:
         raise RuntimeError(f"don't recognize model={flags.model}")
     

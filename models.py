@@ -2,6 +2,8 @@
 import torch
 import torch.nn as nn
 
+from gumbel_vector_quantizer import GumbelVectorQuantizer
+
 
 class PatchEmbedding(nn.Module):
     def __init__(self, image_size, patch_size, in_channels, embed_dim):
@@ -116,27 +118,36 @@ class VisionTransformer(nn.Module):
         return logits
 
 
-class VisionTransWithConvs(nn.Module):
-    def __init__(self, image_size, kernel_size, in_channels, embed_dim, groups, stride, dilate, num_heads, mlp_dim, num_layers, num_classes, dropout=0.1):
+class VitWithConvs(nn.Module):
+    def __init__(self, flags, in_channels, num_classes):
         super().__init__()
 
-        # set up feature extractor
-        self.conv2d = nn.Conv2d(in_channels, embed_dim * groups, kernel_size, groups=groups, stride=stride, dilation=dilate)
-        self.proj_feats = nn.Linear(embed_dim * groups, embed_dim)
-        self.feat_norm = nn.LayerNorm(embed_dim)
+        edim = flags.embed_dim
+        drop = flags.dropout
 
-        self.embed_len = int(((image_size - dilate * (kernel_size - 1) + 1) / stride + 1) ** 2) + 1  # max seqlen
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, embed_dim))
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.dropout = nn.Dropout(dropout)
+        # set up feature extractor
+        self.conv2d = nn.Conv2d(in_channels,
+                                edim * flags.conv_groups,
+                                flags.conv_kernel,
+                                groups=flags.conv_groups,
+                                stride=flags.conv_stride,
+                                dilation=flags.conv_dilate)
+        self.proj_feats = nn.Linear(edim * flags.conv_groups, edim)
+        self.feat_drop = nn.Dropout(drop)
+        self.feat_norm = nn.LayerNorm(edim)
+
+        self.embed_len = int(((flags.image_size - flags.conv_dilate * (flags.conv_kernel - 1) + 1) / flags.conv_stride + 1) ** 2) + 1  # max seqlen
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, edim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, edim))
+        self.dropout = nn.Dropout(drop)
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(embed_dim, num_heads, mlp_dim, dropout) for i in range(num_layers)
+            TransformerBlock(edim, flags.num_heads, flags.mlp_dim, drop) for i in range(flags.num_layers)
         ])
-        self.norm = nn.LayerNorm(embed_dim)
-        self.cls_head = nn.Sequential(nn.Linear(embed_dim, embed_dim//2),
+        self.norm = nn.LayerNorm(edim)
+        self.cls_head = nn.Sequential(nn.Linear(edim, edim // 2),
                                 nn.GELU(),
-                                nn.Dropout(dropout),
-                                nn.Linear(embed_dim // 2, num_classes),
+                                nn.Dropout(drop),
+                                nn.Linear(edim // 2, num_classes),
                                 )
 
     def forward(self, x):
@@ -144,7 +155,85 @@ class VisionTransWithConvs(nn.Module):
         x = self.conv2d(x)
         x = x.flatten(2).transpose(1, 2)
         x = self.proj_feats(x)
+        x = self.feat_drop(x)
         x = self.feat_norm(x)
+
+        # add class embedding
+        x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
+
+        # add positional embedding
+        x = x + self.pos_embed[:, -x.size(1):, :]
+
+        for block in self.transformer_blocks:
+            x = block(x)
+
+        logits = self.cls_head(x[:, 0])
+
+        return logits
+
+class VitWithVQ(nn.Module):
+    def __init__(self, flags, in_channels, num_classes):
+        super().__init__()
+
+        edim = flags.embed_dim
+        drop = flags.dropout
+
+        # set up feature extractor
+        self.conv2d = nn.Conv2d(in_channels,
+                                edim * flags.conv_groups,
+                                flags.conv_kernel,
+                                groups=flags.conv_groups,
+                                stride=flags.conv_stride,
+                                dilation=flags.conv_dilate)
+        self.proj_feats = nn.Linear(edim * flags.conv_groups, edim)
+        self.feat_drop = nn.Dropout(drop)
+        self.feat_norm = nn.LayerNorm(edim)
+
+        # set up quantizer
+        vq_dim = flags.vq_dim if flags.vq_dim > 0 else edim
+        self.vq = GumbelVectorQuantizer(
+            dim=edim,  # input dimension
+            num_vars=flags.vq_vars,
+            temp=flags.vq_temp,
+            groups=flags.vq_groups,
+            combine_groups=False,
+            vq_dim=vq_dim,  # output dimension
+            time_first=True,
+            weight_proj_depth=flags.vq_depth,
+            weight_proj_factor=flags.vq_factor,
+        )
+        self.project_vs = nn.Linear(vq_dim, edim)
+
+        self.embed_len = int(((flags.image_size - flags.conv_dilate * (flags.conv_kernel - 1) + 1) / flags.conv_stride + 1) ** 2) + 1  # max seqlen
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, edim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, edim))
+        self.dropout = nn.Dropout(drop)
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(edim, flags.num_heads, flags.mlp_dim, drop) for i in range(flags.num_layers)
+        ])
+        self.norm = nn.LayerNorm(edim)
+        self.cls_head = nn.Sequential(nn.Linear(edim, edim // 2),
+                                nn.GELU(),
+                                nn.Dropout(drop),
+                                nn.Linear(edim // 2, num_classes),
+                                )
+
+    def forward(self, x):
+        # feature extract
+        x = self.conv2d(x)
+        x = x.flatten(2).transpose(1, 2)
+        x = self.proj_feats(x)
+        x = self.feat_drop(x)
+        x = self.feat_norm(x)
+
+        vs = self.vq(x)
+        # dictionary returns a bunch of stats we could log if we wanted
+        # features = q["x"]
+        # num_vars = q["num_vars"]
+        # code_ppl = q["code_perplexity"]
+        # prob_ppl = q["prob_perplexity"]
+        # curr_temp = q["temp"]
+        x = self.project_vs(vs['x'])
 
         # add class embedding
         x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
