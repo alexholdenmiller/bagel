@@ -90,6 +90,7 @@ def main(flags : DictConfig):
     plt.plot_size(60, 10)
 
     prev_time = time()
+    total_steps = 0
     for epoch in range(1, flags.num_epochs + 1):
         # if not load_pretrained:
         running_accuracy = 0.0
@@ -97,6 +98,7 @@ def main(flags : DictConfig):
         model.train()
         for batch in tqdm(trainloader, desc=f"Training Epoch {epoch}: "):
             inputs, labels = batch
+            total_steps += inputs.size(0)
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -107,6 +109,9 @@ def main(flags : DictConfig):
             acc = (outputs.argmax(dim=1) == labels).float().mean()
             running_accuracy += acc.item()
             running_loss += loss.item()
+
+            if flags.model == "vqt":
+                model.vq.set_num_updates(total_steps)
 
         running_accuracy /= len(trainloader)
         running_accuracy *= 100
