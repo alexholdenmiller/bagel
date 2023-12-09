@@ -114,9 +114,9 @@ def main(flags : DictConfig):
         train_accs.append(running_accuracy)
 
         # Validate the model
-        model.eval()
         correct = 0
         total = 0
+        model.eval()
         with torch.no_grad():
             for data in validloader:
                 images, labels = data

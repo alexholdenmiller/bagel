@@ -225,15 +225,9 @@ class VitWithVQ(nn.Module):
         x = self.proj_feats(x)
         x = self.feat_drop(x)
         x = self.feat_norm(x)
-
+    
         vs = self.vq(x)
-        # dictionary returns a bunch of stats we could log if we wanted
-        # features = q["x"]
-        # num_vars = q["num_vars"]
-        # code_ppl = q["code_perplexity"]
-        # prob_ppl = q["prob_perplexity"]
-        # curr_temp = q["temp"]
-        x = self.project_vs(vs['x'])
+        x = self.project_vs(vs)
 
         # add class embedding
         x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)

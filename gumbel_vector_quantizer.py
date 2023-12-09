@@ -97,60 +97,7 @@ class GumbelVectorQuantizer(nn.Module):
             self.max_temp * self.temp_decay**num_updates, self.min_temp
         )
 
-    def get_codebook_indices(self):
-        if self.codebook_indices is None:
-            from itertools import product
-
-            p = [range(self.num_vars)] * self.groups
-            inds = list(product(*p))
-            self.codebook_indices = torch.tensor(
-                inds, dtype=torch.long, device=self.vars.device
-            ).flatten()
-
-            if not self.combine_groups:
-                self.codebook_indices = self.codebook_indices.view(
-                    self.num_vars**self.groups, -1
-                )
-                for b in range(1, self.groups):
-                    self.codebook_indices[:, b] += self.num_vars * b
-                self.codebook_indices = self.codebook_indices.flatten()
-        return self.codebook_indices
-
-    def codebook(self):
-        indices = self.get_codebook_indices()
-        return (
-            self.vars.squeeze(0)
-            .index_select(0, indices)
-            .view(self.num_vars**self.groups, -1)
-        )
-
-    def sample_from_codebook(self, b, n):
-        indices = self.get_codebook_indices()
-        indices = indices.view(-1, self.groups)
-        cb_size = indices.size(0)
-        assert (
-            n < cb_size
-        ), f"sample size {n} is greater than size of codebook {cb_size}"
-        sample_idx = torch.randint(low=0, high=cb_size, size=(b * n,))
-        indices = indices[sample_idx]
-
-        z = self.vars.squeeze(0).index_select(0, indices.flatten()).view(b, n, -1)
-        return z
-
-    def to_codebook_index(self, indices):
-        res = indices.new_full(indices.shape[:-1], 0)
-        for i in range(self.groups):
-            exponent = self.groups - i - 1
-            res += indices[..., i] * (self.num_vars**exponent)
-        return res
-
-    def forward_idx(self, x):
-        res = self.forward(x, produce_targets=True)
-        return res["x"], res["targets"]
-
-    def forward(self, x, produce_targets=False):
-
-        result = {"num_vars": self.num_vars * self.groups}
+    def forward(self, x):
 
         if not self.time_first:
             x = x.transpose(1, 2)
@@ -160,32 +107,18 @@ class GumbelVectorQuantizer(nn.Module):
         x = self.weight_proj(x)
         x = x.view(bsz * tsz * self.groups, -1)
 
-        with torch.no_grad():
-            _, k = x.max(-1)
-            hard_x = (
-                x.new_zeros(*x.shape)
-                .scatter_(-1, k.view(-1, 1), 1.0)
-                .view(bsz * tsz, self.groups, -1)
-            )
-            hard_probs = torch.mean(hard_x.float(), dim=0)
-            result["code_perplexity"] = torch.exp(
-                -torch.sum(hard_probs * torch.log(hard_probs + 1e-7), dim=-1)
-            ).sum()
-
-        avg_probs = torch.softmax(
-            x.view(bsz * tsz, self.groups, -1).float(), dim=-1
-        ).mean(dim=0)
-        result["prob_perplexity"] = torch.exp(
-            -torch.sum(avg_probs * torch.log(avg_probs + 1e-7), dim=-1)
-        ).sum()
-
-        result["temp"] = self.curr_temp
-
         if self.training:
             x = F.gumbel_softmax(x.float(), tau=self.curr_temp, hard=self.hard).type_as(
                 x
             )
         else:
+            with torch.no_grad():
+                _, k = x.max(-1)
+                hard_x = (
+                    x.new_zeros(*x.shape)
+                    .scatter_(-1, k.view(-1, 1), 1.0)
+                    .view(bsz * tsz, self.groups, -1)
+                )
             x = hard_x
 
         x = x.view(bsz * tsz, -1)
@@ -193,14 +126,6 @@ class GumbelVectorQuantizer(nn.Module):
         vars = self.vars
         if self.combine_groups:
             vars = vars.repeat(1, self.groups, 1)
-
-        if produce_targets:
-            result["targets"] = (
-                x.view(bsz * tsz * self.groups, -1)
-                .argmax(dim=-1)
-                .view(bsz, tsz, self.groups)
-                .detach()
-            )
 
         x = x.unsqueeze(-1) * vars
         x = x.view(bsz * tsz, self.groups, self.num_vars, -1)
@@ -210,6 +135,4 @@ class GumbelVectorQuantizer(nn.Module):
         if not self.time_first:
             x = x.transpose(1, 2)  # BTC -> BCT
 
-        result["x"] = x
-
-        return result
+        return x
