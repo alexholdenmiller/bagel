@@ -14,10 +14,9 @@ class PatchEmbedding(nn.Module):
         self.embed_dim = embed_dim
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.proj = nn.Conv2d(self.in_channels,
-                            self.embed_dim,
-                            kernel_size=self.patch_size,
-                            stride=self.patch_size
-                           )
+                              self.embed_dim,
+                              kernel_size=self.patch_size,
+                              stride=self.patch_size)
         self.norm = nn.LayerNorm(self.embed_dim)
 
     def forward(self, x):
