@@ -88,21 +88,25 @@ class TransformerBlock(nn.Module):
         return x
     
 class VisionTransformer(nn.Module):
-    def __init__(self, image_size, patch_size, in_channels, embed_dim, num_heads, mlp_dim, num_layers, num_classes, dropout=0.1):
+    def __init__(self, flags, in_channels, num_classes):
         super().__init__()
-        self.patch_embed = PatchEmbedding(image_size, patch_size, in_channels, embed_dim)
+
+        edim = flags.embed_dim
+        drop = flags.dropout
+
+        self.patch_embed = PatchEmbedding(flags.image_size, flags.patch_size, in_channels, flags.embed_dim)
         self.embed_len = self.patch_embed.num_patches + 1
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, embed_dim))
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.dropout = nn.Dropout(dropout)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, edim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, edim))
+        self.dropout = nn.Dropout(drop)
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(embed_dim, num_heads, mlp_dim, dropout) for i in range(num_layers)
+            TransformerBlock(edim, flags.num_heads, flags.mlp_dim, drop) for i in range(flags.num_layers)
         ])
-        self.norm = nn.LayerNorm(embed_dim)
-        self.cls_head = nn.Sequential(nn.Linear(embed_dim, embed_dim//2),
+        self.norm = nn.LayerNorm(edim)
+        self.cls_head = nn.Sequential(nn.Linear(edim, edim // 2),
                                 nn.GELU(),
-                                nn.Dropout(dropout),
-                                nn.Linear(embed_dim // 2, num_classes),
+                                nn.Dropout(drop),
+                                nn.Linear(edim // 2, num_classes),
                                 )
 
     def forward(self, x):
@@ -179,15 +183,24 @@ class VitWithVQ(nn.Module):
         drop = flags.dropout
 
         # set up feature extractor
-        self.conv2d = nn.Conv2d(in_channels,
-                                edim * flags.conv_groups,
-                                flags.conv_kernel,
-                                groups=flags.conv_groups,
-                                stride=flags.conv_stride,
-                                dilation=flags.conv_dilate)
-        self.proj_feats = nn.Linear(edim * flags.conv_groups, edim)
-        self.feat_drop = nn.Dropout(drop)
-        self.feat_norm = nn.LayerNorm(edim)
+
+        self.feats = flags.vq_feats
+        if self.feats == "conv":
+            self.conv2d = nn.Conv2d(in_channels,
+                                    edim * flags.conv_groups,
+                                    flags.conv_kernel,
+                                    groups=flags.conv_groups,
+                                    stride=flags.conv_stride,
+                                    dilation=flags.conv_dilate)
+            self.proj_feats = nn.Linear(edim * flags.conv_groups, edim)
+            self.feat_drop = nn.Dropout(drop)
+            self.feat_norm = nn.LayerNorm(edim)
+            self.embed_len = int(((flags.image_size - flags.conv_dilate * (flags.conv_kernel - 1) + 1) / flags.conv_stride + 1) ** 2) + 1  # max seqlen
+        elif self.feats == "patch":
+            self.patch_embed = PatchEmbedding(flags.image_size, flags.patch_size, in_channels, flags.embed_dim)
+            self.embed_len = self.patch_embed.num_patches + 1
+        else:
+            raise RuntimeError(f"did not recognize vq_feats={flags.vq_feats}")
 
         # set up quantizer
         vq_dim = flags.vq_dim if flags.vq_dim > 0 else edim
@@ -203,8 +216,8 @@ class VitWithVQ(nn.Module):
             weight_proj_factor=flags.vq_factor,
         )
         self.project_vs = nn.Linear(vq_dim, edim)
+        self.vq_drop = nn.Dropout(flags.vq_drop)
 
-        self.embed_len = int(((flags.image_size - flags.conv_dilate * (flags.conv_kernel - 1) + 1) / flags.conv_stride + 1) ** 2) + 1  # max seqlen
         self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, edim))
         self.cls_token = nn.Parameter(torch.zeros(1, 1, edim))
         self.dropout = nn.Dropout(drop)
@@ -220,13 +233,19 @@ class VitWithVQ(nn.Module):
 
     def forward(self, x):
         # feature extract
-        x = self.conv2d(x)
-        x = x.flatten(2).transpose(1, 2)
-        x = self.proj_feats(x)
-        x = self.feat_drop(x)
-        x = self.feat_norm(x)
+        if self.feats == "conv":
+            x = self.conv2d(x)
+            x = x.flatten(2).transpose(1, 2)
+            x = self.proj_feats(x)
+            x = self.feat_drop(x)
+            x = self.feat_norm(x)
+        elif self.feats == "patch":
+            x = self.patch_embed(x)
+        else:
+            raise RuntimeError("unexpected code path")
     
         vs = self.vq(x)
+        vs = self.vq_drop(vs)
         x = self.project_vs(vs)
 
         # add class embedding

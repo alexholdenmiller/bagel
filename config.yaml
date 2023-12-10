@@ -14,7 +14,7 @@ hydra:
     dir: ${oc.env:SCRATCH}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
   launcher:
     gres: gpu:1     # use this on the nyu greene cluster instead of gpus_per_node
-    timeout_min: 240     
+    timeout_min: 90     
     tasks_per_node: 1
     cpus_per_task: 2
     nodes: 1
@@ -39,6 +39,7 @@ log_freq: 5     # frequency of logging in *seconds*
 # project params
 datadir: ${hydra:runtime.cwd}/data/
 image_size: 32
+patch_size: 4
 
 batch_size: 128
 embed_dim: 256
@@ -63,9 +64,11 @@ conv_stride: 3
 conv_groups: 1
 conv_dilate: 1
 
-vq_vars: 64
-vq_groups: 8
+vq_feats: conv  # conv, patch
+vq_vars: 32
+vq_groups: 32
 vq_dim: 256  # if <= 0, uses embed_dim / latent_groups
 vq_factor: 3  # increases inner quantizer dimensionality if depth > 1
 vq_depth: 1  # if >1, applies mlp after quantization, I think?
 vq_temp: (2, 0.1, 0.999995)  # start, end, decay. temperature for latent variable sampling.
+vq_drop: 0

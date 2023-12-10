@@ -64,7 +64,7 @@ def main(flags : DictConfig):
     validloader = torch.utils.data.DataLoader(validset, batch_size=flags.batch_size, shuffle=False, num_workers=0, pin_memory=(device == "cuda"))
 
     if flags.model == "vit":
-        model = VisionTransformer(flags.image_size, patch_size, in_channels, flags.embed_dim, flags.num_heads, flags.mlp_dim, flags.num_layers, num_classes, flags.dropout)
+        model = VisionTransformer(flags, in_channels, num_classes)
     elif flags.model == "convt":
         model = VitWithConvs(flags, in_channels, num_classes)
     elif flags.model == "vqt":
@@ -122,7 +122,6 @@ def main(flags : DictConfig):
     prev_time = time()
     total_steps = 0
     for epoch in range(1, flags.num_epochs + 1):
-        # if not load_pretrained:
         running_accuracy = 0.0
         running_loss = 0.0
         model.train()
@@ -185,9 +184,6 @@ def main(flags : DictConfig):
                 "valid_acc": val_acc,
                 "epoch": epoch
             })
-
-
-        # Save the best model
 
         if val_acc > best_val_acc:
             epochs_no_improve = 0
