@@ -47,6 +47,8 @@ mlp_dim: 1024
 num_layers: 6
 dropout: 0.1
 
+scheduler: onecycle
+optim: adamw
 lr: 0.0006
 weight_decay: 0.0
 num_epochs: 10
@@ -61,8 +63,8 @@ conv_stride: 3
 conv_groups: 1
 conv_dilate: 1
 
-vq_vars: 32
-vq_groups: 16
+vq_vars: 64
+vq_groups: 8
 vq_dim: 256  # if <= 0, uses embed_dim / latent_groups
 vq_factor: 3  # increases inner quantizer dimensionality if depth > 1
 vq_depth: 1  # if >1, applies mlp after quantization, I think?

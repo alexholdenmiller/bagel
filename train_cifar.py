@@ -5,7 +5,9 @@ import wandb
 import plotext as plt
 import torch.nn as nn
 
+from dadaptation import DAdaptAdam
 from omegaconf import DictConfig
+from prodigyopt import Prodigy
 from time import time
 from torchvision import datasets, transforms
 from tqdm import tqdm
@@ -70,22 +72,50 @@ def main(flags : DictConfig):
     else:
         raise RuntimeError(f"don't recognize model={flags.model}")
     
-    trainable_params = sum([p.numel() for p in model.parameters() if p.requires_grad])
-    log.info(f"model has {trainable_params} trainable parameters")
+    total_params = sum([p.numel() for p in model.parameters() if p.requires_grad])
+    log.info(f"model has {total_params} trainable parameters")
 
     model = model.to(device)
     criterion = nn.CrossEntropyLoss()
 
-    optimizer = torch.optim.AdamW(model.parameters(),
-                                lr=flags.lr,
-                                weight_decay=flags.weight_decay)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=flags.lr, steps_per_epoch=len(trainloader), epochs=flags.num_epochs)
+    if flags.optim == "adamw":
+        optimizer = torch.optim.AdamW(model.parameters(),
+                                    lr=flags.lr,
+                                    weight_decay=flags.weight_decay)
+    elif flags.optim == "adam":
+        optimizer = torch.optim.Adam(model.parameters(),
+                                    lr=flags.lr,
+                                    weight_decay=flags.weight_decay)
+    elif flags.optim.startswith("dadam"):
+        if flags.lr != 1.0:
+            log.warning("lr != 1.0 for dadapt, overriding it")
+        optimizer = DAdaptAdam(model.parameters(),
+                               lr=1.0,
+                               weight_decay=flags.weight_decay,
+                               decouple=flags.optim.endswith("w"))
+    elif flags.optim.startswith("padam"):
+        if flags.lr != 1.0:
+            log.warning("lr != 1.0 for prodigy, overriding it")
+        optimizer = Prodigy(model.parameters(),
+                            lr=1.0,
+                            weight_decay=flags.weight_decay,
+                            decouple=flags.optim.endswith("w"))
+    else:
+        raise RuntimeError(f"don't recognize optim={flags.optim}")
+    
+    scheduler = None
+    if flags.scheduler == "onecycle":
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=flags.lr, steps_per_epoch=len(trainloader), epochs=flags.num_epochs)
+    elif flags.scheduler == "cos":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(trainloader) * flags.num_epochs)
+    elif flags.scheduler != "none":
+        raise RuntimeError(f"don't recognize scheduler={flags.scheduler}")
 
     best_val_acc = 0
     train_accs = [0.0]
     val_accs = [0.0]
     epochs_no_improve = 0
-    max_patience = 3
+    max_patience = 5
 
     plt.plot_size(60, 10)
 
@@ -105,7 +135,8 @@ def main(flags : DictConfig):
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            scheduler.step()
+            if scheduler is not None:
+                scheduler.step()
             acc = (outputs.argmax(dim=1) == labels).float().mean()
             running_accuracy += acc.item()
             running_loss += loss.item()
@@ -172,7 +203,7 @@ def main(flags : DictConfig):
 
     if flags.wandb_log:
         wandb.run.summary["best_valid_acc"] = best_val_acc
-        wandb.run.summary["model_size"] = trainable_params
+        wandb.run.summary["model_size"] = total_params
 
 if __name__ == "__main__":
     print("use main.py to launch training - it sets the config params")
