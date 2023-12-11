@@ -51,7 +51,7 @@ dropout: 0.1
 scheduler: onecycle
 optim: adamw
 lr: 0.0006
-weight_decay: 0.0
+weight_decay: 0.1
 num_epochs: 10
 
 # model options
@@ -71,4 +71,4 @@ vq_dim: 256  # if <= 0, uses embed_dim / latent_groups
 vq_factor: 3  # increases inner quantizer dimensionality if depth > 1
 vq_depth: 1  # if >1, applies mlp after quantization, I think?
 vq_temp: (2, 0.1, 0.999995)  # start, end, decay. temperature for latent variable sampling.
-vq_drop: 0
+vq_drop: 0.1
