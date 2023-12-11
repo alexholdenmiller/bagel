@@ -87,8 +87,11 @@ class VectorQuantizer(nn.Module):
         # Add the residue back to the latents
         quantized_latents = latents + (quantized_latents - latents).detach()
 
-        return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss  # [B x D x H x W]
-
+        avg_probs = torch.mean(encoding_one_hot, dim=0)
+        perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
+        
+        # Convert quantized from BHWC -> BCHW
+        return vq_loss, perplexity, quantized.permute(0, 3, 1, 2).contiguous(), encoding_one_hot
 class ResidualLayer(nn.Module):
 
     def __init__(self,
@@ -222,7 +225,7 @@ class VQVAE(BaseVAE):
 
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
         encoding = self.encode(input)[0]
-        quantized_inputs, vq_loss = self.vq_layer(encoding)
+        vq_loss, ppl, quantized_inputs, encodings  = self.vq_layer(encoding)
         return [self.decode(quantized_inputs), input, vq_loss]
 
     def loss_function(self,
