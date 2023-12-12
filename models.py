@@ -118,7 +118,7 @@ class VisionTransformer(nn.Module):
         # x = self.norm(x)
         logits = self.cls_head(x[:, 0])
 
-        return logits
+        return logits, {}
 
 
 class VitWithConvs(nn.Module):
@@ -172,7 +172,7 @@ class VitWithConvs(nn.Module):
 
         logits = self.cls_head(x[:, 0])
 
-        return logits
+        return logits, {}
 
 class VitWithVQ(nn.Module):
     def __init__(self, flags, in_channels, num_classes):
@@ -244,8 +244,9 @@ class VitWithVQ(nn.Module):
             raise RuntimeError("unexpected code path")
     
         vs = self.vq(x)
-        vs = self.vq_drop(vs)
-        x = self.project_vs(vs)
+        x = vs["x"]
+        x = self.vq_drop(x)
+        x = self.project_vs(x)
 
         # add class embedding
         x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
@@ -258,4 +259,6 @@ class VitWithVQ(nn.Module):
 
         logits = self.cls_head(x[:, 0])
 
-        return logits
+        return logits, {
+            "code_perplexity": vs["code_perplexity"]
+        }
