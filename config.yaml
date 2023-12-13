@@ -52,7 +52,7 @@ scheduler: onecycle
 optim: adamw
 lr: 0.0006
 weight_decay: 0.1
-num_epochs: 10
+num_epochs: 40
 
 # model options
 # vit: standard vision transformer with patch embeddings, ie nn.Conv2d(3, edim, kernel=psz, stride=psz)
@@ -64,11 +64,11 @@ conv_stride: 3
 conv_groups: 1
 conv_dilate: 1
 
-vq_feats: conv  # conv, patch
+vq_feats: patch  # conv, patch
 vq_vars: 32
 vq_groups: 32
 vq_dim: 256  # if <= 0, uses embed_dim / latent_groups
-vq_factor: 3  # increases inner quantizer dimensionality if depth > 1
+vq_factor: 1  # increases inner quantizer dimensionality if depth > 1
 vq_depth: 1  # if >1, applies mlp after quantization, I think?
 vq_temp: (2, 0.1, 0.999995)  # start, end, decay. temperature for latent variable sampling.
 vq_drop: 0.1
