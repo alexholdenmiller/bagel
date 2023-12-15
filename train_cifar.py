@@ -88,16 +88,16 @@ def main(flags : DictConfig):
                                     weight_decay=flags.weight_decay)
     elif flags.optim.startswith("dadam"):
         if flags.lr != 1.0:
-            log.warning("lr != 1.0 for dadapt, overriding it")
+            log.warning("lr != 1.0 for dadapt")
         optimizer = DAdaptAdam(model.parameters(),
-                               lr=1.0,
+                               lr=flags.lr,
                                weight_decay=flags.weight_decay,
                                decouple=flags.optim.endswith("w"))
     elif flags.optim.startswith("padam"):
         if flags.lr != 1.0:
-            log.warning("lr != 1.0 for prodigy, overriding it")
+            log.warning("lr != 1.0 for prodigy")
         optimizer = Prodigy(model.parameters(),
-                            lr=1.0,
+                            lr=flags.lr,
                             weight_decay=flags.weight_decay,
                             decouple=flags.optim.endswith("w"))
     else:
