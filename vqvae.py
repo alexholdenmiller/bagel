@@ -11,6 +11,8 @@ from torch.nn import functional as F
 from typing import List, Callable, Union, Any, TypeVar, Tuple
 from tqdm import tqdm
 
+import wandb
+
 # from torch import tensor as Tensor
 Tensor = TypeVar('torch.tensor')
 
@@ -47,19 +49,35 @@ class VectorQuantizer(nn.Module):
     def __init__(self,
                  num_embeddings: int,
                  embedding_dim: int,
-                 beta: float = 0.25):
+                 beta: float = 0.25,
+                 use_ema = False,
+                 decay=0.99,
+                 epsilon=1e-5):
         super(VectorQuantizer, self).__init__()
-        self.K = num_embeddings
-        self.D = embedding_dim
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
         self.beta = beta
 
-        self.embedding = nn.Embedding(self.K, self.D)
-        self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
+        self.embedding = nn.Embedding(self.num_embeddings, self.embedding_dim)
+        
+        self.use_ema = use_ema
+        
+        if self.use_ema:
+            self.embedding.weight.data.normal_()
+            self.register_buffer('_ema_cluster_size', torch.zeros(self.num_embeddings))
+            self.ema_w = nn.Parameter(torch.Tensor(self.num_embeddings, self.embedding_dim))
+            self.ema_w.data.normal_()
+
+            self.decay = decay
+            self.epsilon = epsilon
+        else:
+            self.embedding.weight.data.uniform_(-1 / self.num_embeddings, 1 / self.num_embeddings)
+        
 
     def forward(self, latents: Tensor) -> Tensor:
         latents = latents.permute(0, 2, 3, 1).contiguous()  # [B x D x H x W] -> [B x H x W x D]
         latents_shape = latents.shape
-        flat_latents = latents.view(-1, self.D)  # [BHW x D]
+        flat_latents = latents.view(-1, self.embedding_dim)  # [BHW x D]
 
         # Compute L2 distance between latents and embedding weights
         dist = torch.sum(flat_latents ** 2, dim=1, keepdim=True) + \
@@ -71,18 +89,37 @@ class VectorQuantizer(nn.Module):
 
         # Convert to one-hot encodings
         device = latents.device
-        encoding_one_hot = torch.zeros(encoding_inds.size(0), self.K, device=device)
+        encoding_one_hot = torch.zeros(encoding_inds.size(0), self.num_embeddings, device=device)
         encoding_one_hot.scatter_(1, encoding_inds, 1)  # [BHW x K]
-
+        
+        # Use EMA to update the embedding vectors
+        if self.use_ema:
+            self._ema_cluster_size = self._ema_cluster_size * self.decay + \
+                (1 - self.decay) * torch.sum(encoding_one_hot, 0)
+    
+            n = torch.sum(self._ema_cluster_size.data)
+            self._ema_cluster_size = (
+                (self._ema_cluster_size + self.epsilon)
+                / (n + self.num_embeddings * self.epsilon) * n
+            )
+            
+            dw = torch.matmul(encoding_one_hot.t(), flat_latents)
+            self.ema_w = nn.Parameter(self.ema_w * self.decay + (1 - self.decay) * dw)
+        
+            self.embedding.weight = nn.Parameter(self.ema_w / self._ema_cluster_size.unsqueeze(1))
+        
         # Quantize the latents
         quantized_latents = torch.matmul(encoding_one_hot, self.embedding.weight)  # [BHW, D]
         quantized_latents = quantized_latents.view(latents_shape)  # [B x H x W x D]
 
         # Compute the VQ Losses
         commitment_loss = F.mse_loss(quantized_latents.detach(), latents)
-        embedding_loss = F.mse_loss(quantized_latents, latents.detach())
-
-        vq_loss = commitment_loss * self.beta + embedding_loss
+        
+        if self.use_ema:
+            vq_loss = commitment_loss * self.beta
+        else:
+            embedding_loss = F.mse_loss(quantized_latents, latents.detach())
+            vq_loss = commitment_loss * self.beta + embedding_loss
 
         # Add the residue back to the latents
         quantized_latents = latents + (quantized_latents - latents).detach()
@@ -90,8 +127,8 @@ class VectorQuantizer(nn.Module):
         avg_probs = torch.mean(encoding_one_hot, dim=0)
         perplexity = torch.exp(-torch.sum(avg_probs * torch.log(avg_probs + 1e-10)))
         
-        # Convert quantized from BHWC -> BCHW
-        return vq_loss, perplexity, quantized.permute(0, 3, 1, 2).contiguous(), encoding_one_hot
+        return vq_loss, perplexity, quantized_latents.permute(0,3,1,2).contiguous(), encoding_one_hot
+
 class ResidualLayer(nn.Module):
 
     def __init__(self,
@@ -113,9 +150,10 @@ class VQVAE(BaseVAE):
                  in_channels: int,
                  embedding_dim: int,
                  num_embeddings: int,
+                 use_ema: True,
                  hidden_dims: List = None,
                  beta: float = 0.25,
-                 img_size: int = 64,
+                 img_size: int = 32,
                  **kwargs) -> None:
         super(VQVAE, self).__init__()
 
@@ -160,7 +198,8 @@ class VQVAE(BaseVAE):
 
         self.vq_layer = VectorQuantizer(num_embeddings,
                                         embedding_dim,
-                                        self.beta)
+                                        self.beta,
+                                        use_ema)
 
         # Build Decoder
         modules = []
@@ -222,30 +261,15 @@ class VQVAE(BaseVAE):
 
         result = self.decoder(z)
         return result
+    
+    def vq(self, encoding: List[Tensor]): 
+        return self.vq_layer(encoding)
 
-    def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
-        encoding = self.encode(input)[0]
-        vq_loss, ppl, quantized_inputs, encodings  = self.vq_layer(encoding)
-        return [self.decode(quantized_inputs), input, vq_loss]
-
-    def loss_function(self,
-                      *args,
-                      **kwargs) -> dict:
-        """
-        :param args:
-        :param kwargs:
-        :return:
-        """
-        recons = args[0]
-        input = args[1]
-        vq_loss = args[2]
-
-        recons_loss = F.mse_loss(recons, input)
-
-        loss = recons_loss + vq_loss
-        return {'loss': loss,
-                'Reconstruction_Loss': recons_loss,
-                'VQ_Loss':vq_loss}
+    def forward(self, inputs: Tensor, **kwargs) -> List[Tensor]:
+        encoding = self.encode(inputs)[0]
+        vqloss, perplexity, quantized_inputs, encoding_one_hot = self.vq(encoding)
+        reconstructed = self.decode(quantized_inputs)
+        return reconstructed, vqloss, perplexity
 
     def sample(self,
                num_samples: int,
@@ -260,6 +284,13 @@ class VQVAE(BaseVAE):
         """
 
         return self.forward(x)[0]
+
+# Function to unnormalize and display an image
+def imshow(img):
+    img = img / 2 + 0.5  # Unnormalize
+    npimg = img.numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+    plt.show()
 
 image_size = 32
 batch_size = 64
@@ -291,12 +322,6 @@ testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True
 # Create a DataLoader for the test set
 testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
 
-# Function to unnormalize and display an image
-def imshow(img):
-    img = img / 2 + 0.5  # Unnormalize
-    npimg = img.numpy()
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
-    plt.show()
 
 # Define a transform to reverse the normalization
 reverse_transform = transforms.Compose([
@@ -309,48 +334,65 @@ dataiter = iter(trainloader)
 images, labels = next(dataiter)
 
 # Show images
-# imshow(torchvision.utils.make_grid(images))
+imshow(torchvision.utils.make_grid(images))
 
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+vqvae_cfg = {
+    'epochs':25,
+    'in_channels':3,
+    'num_embed':512,
+    'embed_dim':64,
+    'lr':3e-4,
+    'use_ema':True
+}
+
+wandb.init(project='bagel',group='vqvae',config=vqvae_cfg)
+
+# Training loop
+
 # Instantiate the VQ-VAE model
-vq_vae = VQVAE(in_channels=3, num_embeddings=512, embedding_dim=64).to(device)
+model = VQVAE(in_channels=3, num_embeddings=512, embedding_dim=64, use_ema=True).to(device)
+model.train()
 
 # Define the loss function and optimizer
 criterion = nn.MSELoss()
-optimizer = optim.Adam(vq_vae.parameters(), lr=1e-3)
+optimizer = optim.Adam(model.parameters(), lr=3e-4)
+
+train_losses = []
+recon_losses = []
+vq_losses = []
+ppls = []
+LOSS = float('inf')
 
 # Training loop
-num_epochs = 10
+num_epochs = 25
 
 for epoch in tqdm(range(num_epochs)):
     for data in trainloader:
         inputs, _ = data
         inputs = inputs.to(device)
+        optimizer.zero_grad()
 
         # Forward pass
-        reconstructed, _, _ = vq_vae(inputs)
+        reconstructed, vq_loss, _ = model(inputs)
 
         # Compute the loss
-        loss = criterion(reconstructed, inputs)
+        recon_loss = criterion(reconstructed, inputs) 
+        loss = recon_loss + vq_loss
 
         # Backward pass and optimization
-        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
+        
+    train_losses.append(loss.item())
+    recon_losses.append(recon_loss.item())
+    vq_losses.append(vq_loss.item())
+    
+    # Save the trained model
+    if loss < LOSS:
+        torch.save({'state_dict': model.state_dict(), 'epoch': epoch, 'loss': loss}, 'vq_vae_model_ema.pth')
     print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item()}')
-
-# Save the trained model
-torch.save(vq_vae.state_dict(), 'vq_vae_model.pth')
-
-# Use the trained VQ-VAE as an image tokenizer
-# You can use the encoder part of the model to obtain codes for input images
-# Example:
-with torch.no_grad():
-    vq_vae.eval()
-    codebook_indices = vq_vae.encode(inputs)
-
-# 'codebook_indices' now contains the indices of the tokens in the codebook for the input images
-
+    
+    wandb.log({'vqvae_loss':loss.item(), 'epoch':epoch})
