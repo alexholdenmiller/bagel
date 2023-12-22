@@ -1,4 +1,5 @@
 
+## basics
 ```
 # for config and plotting
 pip installd -r requirements.txt
@@ -19,4 +20,12 @@ python main.py
 
 # to run a sweep (don't srun first)
 python main.py -m lr=0.1,0.01 batch_size=128,32
+```
+
+## reproing patch embedding, convolutions, and vector quantization
+
+```
+python main.py model=vit
+python main.py model=convt
+python main.py model=vqt
 ```
