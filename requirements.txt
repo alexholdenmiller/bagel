@@ -1,0 +1,6 @@
+dadaptation
+hydra-core
+hydra_colorlog
+plotext
+prodigyopt
+wandb

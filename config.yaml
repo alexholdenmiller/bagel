@@ -1,30 +1,28 @@
 defaults:
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
-  # - override hydra/launcher: submitit_slurm
+  - override hydra/launcher: submitit_slurm
 
 # SLURM config
 # This might help with Greene setup: https://github.com/alexholdenmiller/nyu_cluster/
-# hydra:
-#   run:  # don't put outputs in HOME, use SCRATCH instead
-#     dir: ${env:SCRATCH}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
-#   sweep:
-#     dir: ${env:SCRATCH}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
-#   launcher:
-#     gres: gpu:1     # use this on the nyu greene cluster instead of gpus_per_node
-#     timeout_min: 15     
-#     tasks_per_node: 1
-#     cpus_per_task: 2
-#     nodes: 1
-#     mem_gb: 16
-#     max_num_timeout: 0     # increase if you support requeuing / preemption
-#     gpus_per_node: null     # don't use this, use gres
-#     partition: null     # don't use this
-#     comment: null     # optionally use this to tell others on the cluster what your job is up to
-
 hydra:
   job:
     chdir: True
+  run:  # don't put outputs in HOME, use SCRATCH instead
+    dir: ${oc.env:SCRATCH}/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${oc.env:SCRATCH}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  launcher:
+    gres: gpu:1     # use this on the nyu greene cluster instead of gpus_per_node
+    timeout_min: 90     
+    tasks_per_node: 1
+    cpus_per_task: 2
+    nodes: 1
+    mem_gb: 16
+    max_num_timeout: 0     # increase if you support requeuing / preemption
+    gpus_per_node: null     # don't use this, use gres
+    partition: null     # don't use this
+    comment: null     # optionally use this to tell others on the cluster what your job is up to
 
 # weights and biases config
 wandb_log: False     # prefer to override this on commandline to avoid cluttering your wandb profile
@@ -41,6 +39,7 @@ log_freq: 5     # frequency of logging in *seconds*
 # project params
 datadir: ${hydra:runtime.cwd}/data/
 image_size: 32
+patch_size: 4
 
 batch_size: 128
 embed_dim: 256
@@ -49,16 +48,32 @@ mlp_dim: 1024
 num_layers: 6
 dropout: 0.1
 
+scheduler: onecycle
+optim: adamw
 lr: 0.0006
-weight_decay: 0.0
-num_epochs: 10
+weight_decay: 0.1
+num_epochs: 40
 
 # model options
 # vit: standard vision transformer with patch embeddings, ie nn.Conv2d(3, edim, kernel=psz, stride=psz)
 # cont: conv feature extractor, then transformer, nn.Conv2d(edim, kernel=2, groups=)
-model: vit  # vit, convt
+# vqt: vector quantization feature extractor, then transformer
+model: vit  # vit, convt, vqt
 
-conv_kernel: 9
+conv_layers: 1
+conv_kernel: 5
 conv_stride: 3
 conv_groups: 1
 conv_dilate: 1
+<<<<<<< HEAD
+=======
+
+vq_feats: patch  # conv, patch
+vq_vars: 32
+vq_groups: 32
+vq_dim: 256  # if <= 0, uses embed_dim / latent_groups
+vq_factor: 1  # increases inner quantizer dimensionality if depth > 1
+vq_depth: 1  # if >1, applies mlp after quantization, I think?
+vq_temp: (2, 0.1, 0.999995)  # start, end, decay. temperature for latent variable sampling.
+vq_drop: 0.1
+>>>>>>> origin/main

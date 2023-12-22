@@ -2,6 +2,8 @@
 import torch
 import torch.nn as nn
 
+from gumbel_vector_quantizer import GumbelVectorQuantizer
+
 
 class PatchEmbedding(nn.Module):
     def __init__(self, image_size, patch_size, in_channels, embed_dim):
@@ -12,10 +14,9 @@ class PatchEmbedding(nn.Module):
         self.embed_dim = embed_dim
         self.num_patches = (self.image_size // self.patch_size) ** 2
         self.proj = nn.Conv2d(self.in_channels,
-                            self.embed_dim,
-                            kernel_size=self.patch_size,
-                            stride=self.patch_size
-                           )
+                              self.embed_dim,
+                              kernel_size=self.patch_size,
+                              stride=self.patch_size)
         self.norm = nn.LayerNorm(self.embed_dim)
 
     def forward(self, x):
@@ -86,21 +87,25 @@ class TransformerBlock(nn.Module):
         return x
     
 class VisionTransformer(nn.Module):
-    def __init__(self, image_size, patch_size, in_channels, embed_dim, num_heads, mlp_dim, num_layers, num_classes, dropout=0.1):
+    def __init__(self, flags, in_channels, num_classes):
         super().__init__()
-        self.patch_embed = PatchEmbedding(image_size, patch_size, in_channels, embed_dim)
+
+        edim = flags.embed_dim
+        drop = flags.dropout
+
+        self.patch_embed = PatchEmbedding(flags.image_size, flags.patch_size, in_channels, flags.embed_dim)
         self.embed_len = self.patch_embed.num_patches + 1
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, embed_dim))
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.dropout = nn.Dropout(dropout)
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, edim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, edim))
+        self.dropout = nn.Dropout(drop)
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(embed_dim, num_heads, mlp_dim, dropout) for i in range(num_layers)
+            TransformerBlock(edim, flags.num_heads, flags.mlp_dim, drop) for i in range(flags.num_layers)
         ])
-        self.norm = nn.LayerNorm(embed_dim)
-        self.cls_head = nn.Sequential(nn.Linear(embed_dim, embed_dim//2),
+        self.norm = nn.LayerNorm(edim)
+        self.cls_head = nn.Sequential(nn.Linear(edim, edim // 2),
                                 nn.GELU(),
-                                nn.Dropout(dropout),
-                                nn.Linear(embed_dim // 2, num_classes),
+                                nn.Dropout(drop),
+                                nn.Linear(edim // 2, num_classes),
                                 )
 
     def forward(self, x):
@@ -113,37 +118,65 @@ class VisionTransformer(nn.Module):
         # x = self.norm(x)
         logits = self.cls_head(x[:, 0])
 
-        return logits
+        return logits, {}
 
 
-class VisionTransWithConvs(nn.Module):
-    def __init__(self, image_size, kernel_size, in_channels, embed_dim, groups, stride, dilate, num_heads, mlp_dim, num_layers, num_classes, dropout=0.1):
+class VitWithConvs(nn.Module):
+    def __init__(self, flags, in_channels, num_classes):
         super().__init__()
 
-        # set up feature extractor
-        self.conv2d = nn.Conv2d(in_channels, embed_dim * groups, kernel_size, groups=groups, stride=stride, dilation=dilate)
-        self.proj_feats = nn.Linear(embed_dim * groups, embed_dim)
-        self.feat_norm = nn.LayerNorm(embed_dim)
+        edim = flags.embed_dim
+        drop = flags.dropout
 
-        self.embed_len = int(((image_size - dilate * (kernel_size - 1) + 1) / stride + 1) ** 2) + 1  # max seqlen
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, embed_dim))
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.dropout = nn.Dropout(dropout)
+        if edim % flags.conv_groups != 0:
+            raise RuntimeError("embed_dim must be divisible by conv_groups")
+
+        # set up feature extractor
+        if flags.conv_layers < 1:
+            raise RuntimeError(f"conv_layers == {flags.conv_layers} < 1")
+        convs = [
+            nn.Conv2d(in_channels,
+                      edim,
+                      flags.conv_kernel,
+                      groups=flags.conv_groups,
+                      stride=flags.conv_stride,
+                      dilation=flags.conv_dilate)
+        ]
+        for i in range(flags.conv_layers - 1):
+            convs.append(
+                nn.Conv2d(edim,
+                          edim,
+                          flags.conv_kernel,
+                          groups=flags.conv_groups,
+                          stride=flags.conv_stride,
+                          dilation=flags.conv_dilate)
+            )
+
+        self.convs = nn.Sequential(*convs)
+        self.proj_feats = nn.Linear(edim, edim)
+        self.feat_drop = nn.Dropout(drop)
+        self.feat_norm = nn.LayerNorm(edim)
+
+        self.embed_len = int(((flags.image_size - flags.conv_dilate * (flags.conv_kernel - 1) + 1) / flags.conv_stride + 1) ** 2) + 1  # max seqlen
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, edim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, edim))
+        self.dropout = nn.Dropout(drop)
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(embed_dim, num_heads, mlp_dim, dropout) for i in range(num_layers)
+            TransformerBlock(edim, flags.num_heads, flags.mlp_dim, drop) for i in range(flags.num_layers)
         ])
-        self.norm = nn.LayerNorm(embed_dim)
-        self.cls_head = nn.Sequential(nn.Linear(embed_dim, embed_dim//2),
+        self.norm = nn.LayerNorm(edim)
+        self.cls_head = nn.Sequential(nn.Linear(edim, edim // 2),
                                 nn.GELU(),
-                                nn.Dropout(dropout),
-                                nn.Linear(embed_dim // 2, num_classes),
+                                nn.Dropout(drop),
+                                nn.Linear(edim // 2, num_classes),
                                 )
 
     def forward(self, x):
         # feature extract
-        x = self.conv2d(x)
+        x = self.convs(x)
         x = x.flatten(2).transpose(1, 2)
         x = self.proj_feats(x)
+        x = self.feat_drop(x)
         x = self.feat_norm(x)
 
         # add class embedding
@@ -157,4 +190,93 @@ class VisionTransWithConvs(nn.Module):
 
         logits = self.cls_head(x[:, 0])
 
-        return logits
+        return logits, {}
+
+class VitWithVQ(nn.Module):
+    def __init__(self, flags, in_channels, num_classes):
+        super().__init__()
+
+        edim = flags.embed_dim
+        drop = flags.dropout
+
+        # set up feature extractor
+
+        self.feats = flags.vq_feats
+        if self.feats == "conv":
+            self.conv2d = nn.Conv2d(in_channels,
+                                    edim * flags.conv_groups,
+                                    flags.conv_kernel,
+                                    groups=flags.conv_groups,
+                                    stride=flags.conv_stride,
+                                    dilation=flags.conv_dilate)
+            self.proj_feats = nn.Linear(edim * flags.conv_groups, edim)
+            self.feat_drop = nn.Dropout(drop)
+            self.feat_norm = nn.LayerNorm(edim)
+            self.embed_len = int(((flags.image_size - flags.conv_dilate * (flags.conv_kernel - 1) + 1) / flags.conv_stride + 1) ** 2) + 1  # max seqlen
+        elif self.feats == "patch":
+            self.patch_embed = PatchEmbedding(flags.image_size, flags.patch_size, in_channels, flags.embed_dim)
+            self.embed_len = self.patch_embed.num_patches + 1
+        else:
+            raise RuntimeError(f"did not recognize vq_feats={flags.vq_feats}")
+
+        # set up quantizer
+        vq_dim = flags.vq_dim if flags.vq_dim > 0 else edim
+        self.vq = GumbelVectorQuantizer(
+            dim=edim,  # input dimension
+            num_vars=flags.vq_vars,
+            temp=flags.vq_temp,
+            groups=flags.vq_groups,
+            combine_groups=False,
+            vq_dim=vq_dim,  # output dimension
+            time_first=True,
+            weight_proj_depth=flags.vq_depth,
+            weight_proj_factor=flags.vq_factor,
+        )
+        self.project_vs = nn.Linear(vq_dim, edim)
+        self.vq_drop = nn.Dropout(flags.vq_drop)
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.embed_len, edim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, edim))
+        self.dropout = nn.Dropout(drop)
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(edim, flags.num_heads, flags.mlp_dim, drop) for i in range(flags.num_layers)
+        ])
+        self.norm = nn.LayerNorm(edim)
+        self.cls_head = nn.Sequential(nn.Linear(edim, edim // 2),
+                                nn.GELU(),
+                                nn.Dropout(drop),
+                                nn.Linear(edim // 2, num_classes),
+                                )
+
+    def forward(self, x):
+        # feature extract
+        if self.feats == "conv":
+            x = self.conv2d(x)
+            x = x.flatten(2).transpose(1, 2)
+            x = self.proj_feats(x)
+            x = self.feat_drop(x)
+            x = self.feat_norm(x)
+        elif self.feats == "patch":
+            x = self.patch_embed(x)
+        else:
+            raise RuntimeError("unexpected code path")
+    
+        vs = self.vq(x)
+        x = vs["x"]
+        x = self.vq_drop(x)
+        x = self.project_vs(x)
+
+        # add class embedding
+        x = torch.cat((self.cls_token.expand(x.shape[0], -1, -1), x), dim=1)
+
+        # add positional embedding
+        x = x + self.pos_embed[:, -x.size(1):, :]
+
+        for block in self.transformer_blocks:
+            x = block(x)
+
+        logits = self.cls_head(x[:, 0])
+
+        return logits, {
+            "code_perplexity": vs["code_perplexity"]
+        }
