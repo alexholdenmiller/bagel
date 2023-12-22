@@ -128,14 +128,32 @@ class VitWithConvs(nn.Module):
         edim = flags.embed_dim
         drop = flags.dropout
 
+        if edim % flags.conv_groups != 0:
+            raise RuntimeError("embed_dim must be divisible by conv_groups")
+
         # set up feature extractor
-        self.conv2d = nn.Conv2d(in_channels,
-                                edim * flags.conv_groups,
-                                flags.conv_kernel,
-                                groups=flags.conv_groups,
-                                stride=flags.conv_stride,
-                                dilation=flags.conv_dilate)
-        self.proj_feats = nn.Linear(edim * flags.conv_groups, edim)
+        if flags.conv_layers < 1:
+            raise RuntimeError(f"conv_layers == {flags.conv_layers} < 1")
+        convs = [
+            nn.Conv2d(in_channels,
+                      edim,
+                      flags.conv_kernel,
+                      groups=flags.conv_groups,
+                      stride=flags.conv_stride,
+                      dilation=flags.conv_dilate)
+        ]
+        for i in range(flags.conv_layers - 1):
+            convs.append(
+                nn.Conv2d(edim,
+                          edim,
+                          flags.conv_kernel,
+                          groups=flags.conv_groups,
+                          stride=flags.conv_stride,
+                          dilation=flags.conv_dilate)
+            )
+
+        self.convs = nn.Sequential(*convs)
+        self.proj_feats = nn.Linear(edim, edim)
         self.feat_drop = nn.Dropout(drop)
         self.feat_norm = nn.LayerNorm(edim)
 
@@ -155,7 +173,7 @@ class VitWithConvs(nn.Module):
 
     def forward(self, x):
         # feature extract
-        x = self.conv2d(x)
+        x = self.convs(x)
         x = x.flatten(2).transpose(1, 2)
         x = self.proj_feats(x)
         x = self.feat_drop(x)
