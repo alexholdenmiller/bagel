@@ -57,8 +57,10 @@ num_epochs: 40
 # model options
 # vit: standard vision transformer with patch embeddings, ie nn.Conv2d(3, edim, kernel=psz, stride=psz)
 # cont: conv feature extractor, then transformer, nn.Conv2d(edim, kernel=2, groups=)
-model: vit  # vit, convt
+# vqt: vector quantization feature extractor, then transformer
+model: vit  # vit, convt, vqt
 
+conv_layers: 1
 conv_kernel: 5
 conv_stride: 3
 conv_groups: 1
