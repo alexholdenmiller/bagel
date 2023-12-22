@@ -65,10 +65,8 @@ def main(flags : DictConfig):
 
     if flags.model == "vit":
         model = VisionTransformer(flags, in_channels, num_classes)
-    elif flags.model == "convt":
-        model = VitWithConvs(flags, in_channels, num_classes)
-    elif flags.model == "vqt":
-        model = VitWithVQ(flags, in_channels, num_classes)
+    elif flags.model == "mrvit":
+        model = MixedResViT(flags, in_channels, num_classes)
     else:
         raise RuntimeError(f"don't recognize model={flags.model}")
     
