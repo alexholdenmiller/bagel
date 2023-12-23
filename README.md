@@ -37,4 +37,4 @@ python vqvae.py # to train the vqvae model
 python vit_vqvae.py # to train vit with vqvae encoding (specify modes: conv, patch, vqvae for comparisons)
 ```
 
-We provide 2 notebook demos: vit-cifar-10.ipynb and vqvae-.ipynb to deonstrate base vit and vqvae vit runs. 
+We provide 2 notebook demos: vit-cifar-10.ipynb and vq-vae.ipynb to deonstrate base vit and vqvae runs. 
