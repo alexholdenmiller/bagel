@@ -29,3 +29,10 @@ python main.py model=vit
 python main.py model=convt
 python main.py model=vqt
 ```
+
+## for running the vqvae experiments
+```
+python vqvae.py # to train the vqvae model
+
+python vit_vqvae.py # to train vit with vqvae encoding (specify modes: conv, patch, vqvae for comparisons)
+```
